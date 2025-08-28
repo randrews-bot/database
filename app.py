@@ -4,6 +4,8 @@ from typing import Optional, List
 import psycopg2, traceback
 from psycopg2.extras import RealDictCursor
 from settings import Settings, get_settings
+import psycopg2
+from settings import Settings
 
 USE_POSTGIS_DISTANCES = False
 app = FastAPI(title="Superior Property API (Hotfix)", version="1.1.1")
@@ -17,13 +19,19 @@ app.add_middleware(
 )
 
 def get_conn(settings: Settings):
+    if settings.DATABASE_URL:
+        # Render, Railway, etc. often supply sslmode in the URL already
+        return psycopg2.connect(settings.DATABASE_URL)
+    # Fallback to discrete vars
     return psycopg2.connect(
         host=settings.PGHOST,
         port=settings.PGPORT,
         dbname=settings.PGDATABASE,
         user=settings.PGUSER,
         password=settings.PGPASSWORD,
+        sslmode=settings.PGSSLMODE,   # critical on hosted DBs
     )
+
 
 def require_api_key(settings: Settings = Depends(get_settings), x_api_key: Optional[str] = Header(default=None)):
     if settings.API_KEY:
