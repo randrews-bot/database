@@ -1,12 +1,20 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    PGHOST: str = "localhost"
+    # Prefer DATABASE_URL if provided (e.g., from Render)
+    DATABASE_URL: str | None = None
+
+    # Or individual params:
+    PGHOST: str | None = None
     PGPORT: int = 5432
-    PGDATABASE: str = "superior_property_db"
-    PGUSER: str = "postgres"
-    PGPASSWORD: str = "postgres"
-    API_KEY: str = ""  # optional; set to require X-API-Key
+    PGDATABASE: str | None = None
+    PGUSER: str | None = None
+    PGPASSWORD: str | None = None
+
+    # Many managed DBs require SSL
+    PGSSLMODE: str = "require"  # "disable" for local dev
+
+    API_KEY: str = ""  # optional
 
     class Config:
         env_file = ".env"
