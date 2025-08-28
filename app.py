@@ -1,18 +1,16 @@
 from fastapi import FastAPI, Depends, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
-import psycopg2
+import psycopg2, traceback
 from psycopg2.extras import RealDictCursor
 from settings import Settings, get_settings
 
 USE_POSTGIS_DISTANCES = False
+app = FastAPI(title="Superior Property API (Hotfix)", version="1.1.1")
 
-app = FastAPI(title="Superior Property API (Patched)", version="1.1.0")
-
-ALLOWED_ORIGINS = ["https://www.superiorllc.org", "https://superiorllc.org"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,105 +33,35 @@ def require_api_key(settings: Settings = Depends(get_settings), x_api_key: Optio
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.1.0", "postgis_enabled": USE_POSTGIS_DISTANCES}
+    return {"ok": True, "version": "1.1.1", "postgis_enabled": USE_POSTGIS_DISTANCES}
 
-@app.get("/meta", dependencies=[Depends(require_api_key)])
-def meta(settings: Settings = Depends(get_settings)):
-    return {
-        "name": "Superior Property API (Patched)",
-        "version": "1.1.0",
-        "notes": "Resilient fallbacks: works without PostGIS and optional views.",
-        "proximity_radius_m": 1609.34,
-        "allowed_origins": ALLOWED_ORIGINS,
-    }
+@app.get("/diag", dependencies=[Depends(require_api_key)])
+def diag(settings: Settings = Depends(get_settings)):
+    out = {}
+    try:
+        with get_conn(settings) as conn, conn.cursor() as cur:
+            cur.execute("SELECT version();"); out["db_version"] = cur.fetchone()[0]
+            cur.execute("""
+                SELECT
+                  to_regclass('public.listings') as listings,
+                  to_regclass('public.properties') as properties,
+                  to_regclass('public.addresses') as addresses,
+                  to_regclass('public.mv_active_listings') as mv_active_listings,
+                  to_regclass('public.v_place_latest_crime') as v_place_latest_crime
+            """)
+            r = cur.fetchone()
+            out["objects"] = {"listings": r[0], "properties": r[1], "addresses": r[2],
+                               "mv_active_listings": r[3], "v_place_latest_crime": r[4]}
+            for t in ["listings","properties","addresses"]:
+                if out["objects"][t]:
+                    cur.execute(f"SELECT count(*) FROM {t};"); out[f"count_{t}"] = cur.fetchone()[0]
+    except Exception as e:
+        out["error"] = str(e)
+        out["trace"] = traceback.format_exc()
+    return out
 
-LISTING_SELECT_FULL = """SELECT
-  l.listing_id AS id,
-  l.property_id,
-  p.property_type AS type,
-  a.street1, a.city, a.state_code, a.zip,
-  l.price, l.tenure, l.bedrooms, l.bathrooms, l.sqft_interior AS sqft,
-  a.latitude AS lat, a.longitude AS lon,
-  p.zoning_code,
-  c.rate_per_1k AS crime_rate_per_1k,
-  img.url AS image,
-  l.url,
-  park.min_dist_m AS nearest_park_m,
-  school.min_dist_m AS nearest_school_m,
-  (park.min_dist_m IS NOT NULL AND park.min_dist_m <= 1609.34) AS has_park_within_1_mile,
-  (school.min_dist_m IS NOT NULL AND school.min_dist_m <= 1609.34) AS has_school_within_1_mile
-FROM mv_active_listings l
-JOIN properties p ON p.property_id = l.property_id
-LEFT JOIN addresses a ON a.address_id = p.address_id
-LEFT JOIN v_place_latest_crime c ON c.place_id = (
-  SELECT place_id FROM places WHERE name = a.city AND state_code = a.state_code LIMIT 1
-)
-LEFT JOIN LATERAL (
-  SELECT i.url FROM images i WHERE i.property_id = p.property_id
-  ORDER BY is_primary DESC NULLS LAST, image_id ASC LIMIT 1
-) img ON true
-LEFT JOIN LATERAL (
-  SELECT MIN(ST_Distance(a.geom, amenities.geom))::double precision AS min_dist_m
-  FROM amenities WHERE amenities.type='park' AND a.geom IS NOT NULL AND amenities.geom IS NOT NULL
-) park ON true
-LEFT JOIN LATERAL (
-  SELECT MIN(ST_Distance(a.geom, schools.geom))::double precision AS min_dist_m
-  FROM schools WHERE a.geom IS NOT NULL AND schools.geom IS NOT NULL
-) school ON true
-"""
-
-LISTING_SELECT_NO_DIST = """SELECT
-  l.listing_id AS id,
-  l.property_id,
-  p.property_type AS type,
-  a.street1, a.city, a.state_code, a.zip,
-  l.price, l.tenure, l.bedrooms, l.bathrooms, l.sqft_interior AS sqft,
-  a.latitude AS lat, a.longitude AS lon,
-  p.zoning_code,
-  c.rate_per_1k AS crime_rate_per_1k,
-  img.url AS image,
-  l.url,
-  NULL::double precision AS nearest_park_m,
-  NULL::double precision AS nearest_school_m,
-  NULL::boolean AS has_park_within_1_mile,
-  NULL::boolean AS has_school_within_1_mile
-FROM mv_active_listings l
-JOIN properties p ON p.property_id = l.property_id
-LEFT JOIN addresses a ON a.address_id = p.address_id
-LEFT JOIN v_place_latest_crime c ON c.place_id = (
-  SELECT place_id FROM places WHERE name = a.city AND state_code = a.state_code LIMIT 1
-)
-LEFT JOIN LATERAL (
-  SELECT i.url FROM images i WHERE i.property_id = p.property_id
-  ORDER BY is_primary DESC NULLS LAST, image_id ASC LIMIT 1
-) img ON true
-"""
-
-LISTING_SELECT_MIN = """SELECT
-  l.listing_id AS id,
-  l.property_id,
-  p.property_type AS type,
-  a.street1, a.city, a.state_code, a.zip,
-  l.price, l.tenure, l.bedrooms, l.bathrooms, l.sqft_interior AS sqft,
-  a.latitude AS lat, a.longitude AS lon,
-  p.zoning_code,
-  NULL::numeric AS crime_rate_per_1k,
-  img.url AS image,
-  l.url,
-  NULL::double precision AS nearest_park_m,
-  NULL::double precision AS nearest_school_m,
-  NULL::boolean AS has_park_within_1_mile,
-  NULL::boolean AS has_school_within_1_mile
-FROM mv_active_listings l
-JOIN properties p ON p.property_id = l.property_id
-LEFT JOIN addresses a ON a.address_id = p.address_id
-LEFT JOIN LATERAL (
-  SELECT i.url FROM images i WHERE i.property_id = p.property_id
-  ORDER BY is_primary DESC NULLS LAST, image_id ASC LIMIT 1
-) img ON true
-"""
-
-LISTING_SELECT_DIRECT = """SELECT
+LISTING_SELECT_DIRECT = """
+SELECT
   l.listing_id AS id,
   l.property_id,
   p.property_type AS type,
@@ -165,48 +93,27 @@ def build_filters(q: Optional[str], typ: Optional[str], city: Optional[str],
     where = []
     params = []
     if typ:
-        where.append("p.property_type = %s")
-        params.append(typ)
+        where.append("p.property_type = %s"); params.append(typ)
     if city:
-        where.append("a.city = %s")
-        params.append(city)
+        where.append("a.city = %s"); params.append(city)
     if min_price is not None:
-        where.append("l.price >= %s")
-        params.append(min_price)
+        where.append("l.price >= %s"); params.append(min_price)
     if max_price is not None:
-        where.append("l.price <= %s")
-        params.append(max_price)
+        where.append("l.price <= %s"); params.append(max_price)
     if beds is not None:
-        where.append("COALESCE(l.bedrooms, p.bedrooms) >= %s")
-        params.append(beds)
+        where.append("COALESCE(l.bedrooms, p.bedrooms) >= %s"); params.append(beds)
     if baths is not None:
-        where.append("COALESCE(l.bathrooms, p.bathrooms) >= %s")
-        params.append(baths)
+        where.append("COALESCE(l.bathrooms, p.bathrooms) >= %s"); params.append(baths)
     if q:
         where.append("(COALESCE(a.street1,'') || ' ' || COALESCE(a.city,'') || ' ' || COALESCE(p.zoning_code,'') ILIKE %s)")
         params.append(f"%{q}%")
     return where, params
 
-def run_with_fallbacks(conn, sql_base: str, where: List[str], params: List, order_limit: str):
-    candidates = []
-    if sql_base == "auto":
-        candidates.append(LISTING_SELECT_FULL if USE_POSTGIS_DISTANCES else LISTING_SELECT_NO_DIST)
-    else:
-        candidates.append(sql_base)
-    candidates.extend([LISTING_SELECT_MIN, LISTING_SELECT_DIRECT])
-
-    last_err = None
-    for base in candidates:
-        sql = base + (" WHERE " + " AND ".join(where) if where else "")
-        sql += " " + order_limit
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sql, params)
-                return cur.fetchall()
-        except Exception as e:
-            last_err = e
-            continue
-    raise HTTPException(status_code=500, detail=f"All query fallbacks failed: {last_err}")
+def run_query(conn, base_sql: str, where: List[str], params: List, order_limit: str):
+    sql = base_sql + (" WHERE " + " AND ".join(where) if where else "") + " " + order_limit
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
 
 @app.get("/listings", dependencies=[Depends(require_api_key)])
 def list_listings(
@@ -224,9 +131,12 @@ def list_listings(
     where, params = build_filters(q, type, city, min_price, max_price, beds, baths)
     order_limit = "ORDER BY l.price NULLS LAST, l.listing_id ASC LIMIT %s OFFSET %s"
     params = params + [limit, offset]
-    with get_conn(settings) as conn:
-        rows = run_with_fallbacks(conn, "auto", where, params, order_limit)
-
+    try:
+        with get_conn(settings) as conn:
+            rows = run_query(conn, LISTING_SELECT_DIRECT, where, params, order_limit)
+    except Exception as e:
+        print("ERROR /listings:", e); traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Query failed; check server logs or /diag")
     out = []
     for r in rows:
         title = ", ".join(filter(None, [r.pop("street1", None), r.get("city"), r.get("state_code"), r.get("zip")]))
@@ -235,60 +145,3 @@ def list_listings(
         r["baths"] = float(r.pop("bathrooms")) if r.get("bathrooms") is not None else None
         out.append(r)
     return {"items": out, "count": len(out), "limit": limit, "offset": offset}
-
-@app.get("/listings/{listing_id}", dependencies=[Depends(require_api_key)])
-def get_listing(listing_id: int, settings: Settings = Depends(get_settings)):
-    where = ["l.listing_id = %s"]
-    params = [listing_id]
-    order_limit = "LIMIT 1"
-    with get_conn(settings) as conn:
-        rows = run_with_fallbacks(conn, "auto", where, params, order_limit)
-    if not rows:
-        raise HTTPException(status_code=404, detail="Listing not found")
-    r = rows[0]
-    title = ", ".join(filter(None, [r.pop("street1", None), r.get("city"), r.get("state_code"), r.get("zip")]))
-    r["title"] = title
-    r["beds"] = float(r.pop("bedrooms")) if r.get("bedrooms") is not None else None
-    r["baths"] = float(r.pop("bathrooms")) if r.get("bathrooms") is not None else None
-    return r
-
-@app.get("/map/bounds", dependencies=[Depends(require_api_key)])
-def listings_in_bounds(
-    min_lat: float, min_lon: float, max_lat: float, max_lon: float,
-    limit: int = Query(default=200, ge=1, le=500),
-    settings: Settings = Depends(get_settings)
-):
-    if USE_POSTGIS_DISTANCES:
-        order_limit = "ORDER BY l.price NULLS LAST, l.listing_id ASC LIMIT %s"
-        params = [min_lon, min_lat, max_lon, max_lat, limit]
-        sql = LISTING_SELECT_FULL + """        WHERE l.status = 'active'
-          AND a.geom IS NOT NULL
-          AND ST_Intersects(a.geom::geometry, ST_SetSRID(ST_MakeEnvelope(%s,%s,%s,%s),4326))
-        """ + order_limit
-        try:
-            with get_conn(settings) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"PostGIS bounds query failed: {e}")
-    else:
-        where = [
-            "l.status = 'active'",
-            "a.latitude IS NOT NULL",
-            "a.longitude IS NOT NULL",
-            "a.latitude BETWEEN %s AND %s",
-            "a.longitude BETWEEN %s AND %s",
-        ]
-        params = [min_lat, max_lat, min_lon, max_lon, limit]
-        order_limit = "ORDER BY l.price NULLS LAST, l.listing_id ASC LIMIT %s"
-        with get_conn(settings) as conn:
-            rows = run_with_fallbacks(conn, LISTING_SELECT_NO_DIST, where, params, order_limit)
-
-    out = []
-    for r in rows:
-        title = ", ".join(filter(None, [r.pop("street1", None), r.get("city"), r.get("state_code"), r.get("zip")]))
-        r["title"] = title
-        r["beds"] = float(r.pop("bedrooms")) if r.get("bedrooms") is not None else None
-        r["baths"] = float(r.pop("bathrooms")) if r.get("bathrooms") is not None else None
-        out.append(r)
-    return {"items": out, "count": len(out)}
