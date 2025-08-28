@@ -1,4 +1,4 @@
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     PGHOST: str = 'localhost'
@@ -6,7 +6,8 @@ class Settings(BaseSettings):
     PGDATABASE: str = 'superior_property_db'
     PGUSER: str = 'postgres'
     PGPASSWORD: str = 'postgres'
-    API_KEY: str = ''
+    API_KEY: str = ''  # optional; require X-API-Key if set
+
     class Config:
         env_file = '.env'
 
