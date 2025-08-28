@@ -4,8 +4,7 @@ from typing import Optional, List
 import psycopg2, traceback
 from psycopg2.extras import RealDictCursor
 from settings import Settings, get_settings
-import psycopg2
-from settings import Settings
+
 
 USE_POSTGIS_DISTANCES = False
 app = FastAPI(title="Superior Property API (Hotfix)", version="1.1.1")
