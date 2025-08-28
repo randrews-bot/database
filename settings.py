@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Prefer DATABASE_URL if provided (e.g., from Render)
-    DATABASE_URL: str | None = None
+    DATABASE_URL: https://superior-property-api.onrender.com/ | None = None
 
     # Or individual params:
     PGHOST: str | None = None
