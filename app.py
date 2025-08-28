@@ -9,11 +9,16 @@ app = FastAPI(title="Superior Property API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://www.superiorllc.org",
+        "https://superiorllc.org"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 
 def get_conn(settings: Settings):
     return psycopg2.connect(
