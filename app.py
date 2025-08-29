@@ -46,9 +46,10 @@ def log_env_state():
     print('=========================')
 
 def get_conn(settings: Settings):
-    dsn = settings.DATABASE_URL or 'postgresql://superior_llc871_user:JYXMZRi7imWeH0Uz8X2pnA3ykyCz9CD5@dpg-d2oetb7fte5s7387rhcg-a.virginia-postgres.render.com/superior_llc871'
-    sslmode = settings.PGSSLMODE or 'require'
-    return psycopg2.connect(dsn, sslmode=sslmode)
+    # Prefer env DATABASE_URL; fall back to your baked-in URL if needed
+    dsn = _sanitize_dsn(settings.DATABASE_URL) or "postgresql://superior_llc871_user:JYXMZRi7imWeH0Uz8X2pnA3ykyCz9CD5@dpg-d2oetb7fte5s7387rhcg-a.virginia-postgres.render.com/superior_llc871?sslmode=require"
+    # Enforce SSL for hosted PG
+    return psycopg2.connect(dsn, sslmode=(settings.PGSSLMODE or "require"))
 
 def require_api_key(settings: Settings = Depends(get_settings), x_api_key: Optional[str] = Header(default=None)):
     if settings.API_KEY:
