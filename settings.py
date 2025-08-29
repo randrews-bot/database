@@ -7,11 +7,11 @@ class Settings(BaseSettings):
     PGDATABASE: str | None = None
     PGUSER: str | None = None
     PGPASSWORD: str | None = None
-    PGSSLMODE: str = "require"
-    API_KEY: str = ""
+    PGSSLMODE: str = 'require'
+    API_KEY: str = ''
 
     class Config:
-        env_file = ".env"
+        env_file = '.env'
 
-def get_settings() -> "Settings":
+def get_settings() -> 'Settings':
     return Settings()
