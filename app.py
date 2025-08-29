@@ -73,6 +73,59 @@ def get_conn(settings: Settings):
     dsn = _ensure_ssl_in_query(dsn, sslmode_default=(settings.PGSSLMODE or "require"))
     return psycopg2.connect(dsn, sslmode=(settings.PGSSLMODE or "require"))
 
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS public.addresses (
+  address_id SERIAL PRIMARY KEY,
+  street1 TEXT,
+  city TEXT,
+  state_code CHAR(2),
+  zip TEXT,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION
+);
+CREATE TABLE IF NOT EXISTS public.properties (
+  property_id SERIAL PRIMARY KEY,
+  address_id INTEGER REFERENCES public.addresses(address_id) ON DELETE SET NULL,
+  property_type TEXT,
+  bedrooms NUMERIC,
+  bathrooms NUMERIC,
+  sqft_interior NUMERIC,
+  zoning_code TEXT
+);
+CREATE TABLE IF NOT EXISTS public.images (
+  image_id SERIAL PRIMARY KEY,
+  property_id INTEGER REFERENCES public.properties(property_id) ON DELETE CASCADE,
+  url TEXT,
+  is_primary BOOLEAN DEFAULT FALSE
+);
+CREATE TABLE IF NOT EXISTS public.listings (
+  listing_id SERIAL PRIMARY KEY,
+  property_id INTEGER REFERENCES public.properties(property_id) ON DELETE CASCADE,
+  price NUMERIC,
+  tenure TEXT,
+  status TEXT DEFAULT 'active',
+  bedrooms NUMERIC,
+  bathrooms NUMERIC,
+  sqft_interior NUMERIC,
+  url TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_listings_status ON public.listings(status);
+CREATE INDEX IF NOT EXISTS idx_properties_type ON public.properties(property_type);
+CREATE INDEX IF NOT EXISTS idx_addresses_city ON public.addresses(city);
+"""
+
+@app.post("/admin/init", dependencies=[Depends(require_api_key)])
+def admin_init(settings: Settings = Depends(get_settings)):
+    try:
+        with get_conn(settings) as conn, conn.cursor() as cur:
+            cur.execute(SCHEMA_SQL)
+        return {"ok": True, "initialized": True}
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": str(e), "trace": traceback.format_exc()}
+
+
+
 # ---------- DEFINE SQL CONSTANTS *BEFORE* routes/functions that use them ----------
 LISTING_SELECT_DIRECT = """
 SELECT
