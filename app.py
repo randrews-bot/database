@@ -21,8 +21,6 @@ def _sanitize_dsn(raw: str) -> str:
     return s
 
 ALLOWED_ORIGINS = [
-    'https://www.superiorllc.org',
-    'https://superiorllc.org',
     'https://api.superiorllc.org',
     'https://superior-property-api.onrender.com',
 ]
