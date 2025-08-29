@@ -83,8 +83,6 @@ def diag(settings: Settings = Depends(get_settings)):
         out['trace'] = traceback.format_exc()
     return out
 
-LISTING_SELECT_DIRECT = '''SELECT\n  l.listing_id AS id,\n  l.property_id,\n  p.property_type AS type,\n  a.street1, a.city, a.state_code, a.zip,\n  l.price, l.tenure,\n  COALESCE(l.bedrooms, p.bedrooms) AS bedrooms,\n  COALESCE(l.bathrooms, p.bathrooms) AS bathrooms,\n  COALESCE(l.sqft_interior, p.sqft_interior) AS sqft,\n  a.latitude AS lat, a.longitude AS lon,\n  p.zoning_code,\n  NULL::numeric AS crime_rate_per_1k,\n  img.url AS image,\n  l.url\nFROM listings l\nJOIN properties p ON p.property_id = l.property_id\nLEFT JOIN addresses a ON a.address_id = p.address_id\nLEFT JOIN LATERAL (\n  SELECT i.url FROM images i WHERE i.property_id = p.property_id\n  ORDER BY is_primary DESC NULLS LAST, image_id ASC LIMIT 1\n) img ON true\nWHERE l.status = 'active''''
-
 def build_filters(q: Optional[str], typ: Optional[str], city: Optional[str],
                   min_price: Optional[float], max_price: Optional[float],
                   beds: Optional[float], baths: Optional[float]):
