@@ -8,6 +8,18 @@ from settings import Settings, get_settings
 
 app = FastAPI(title='Superior Property API', version='1.2.3')
 
+def _sanitize_dsn(raw: str) -> str:
+    s = (raw or "").strip()
+    low = s.lower()
+    # Strip a leading "DATABASE_URL=" if someone pasted "DATABASE_URL=postgresql://..."
+    if low.startswith("database_url="):
+        s = s.split("=", 1)[1].strip().strip("'").strip('"')
+        low = s.lower()
+    # Normalize postgres -> postgresql scheme
+    if low.startswith("postgres://"):
+        s = "postgresql://" + s[len("postgres://"):]
+    return s
+
 ALLOWED_ORIGINS = [
     'https://www.superiorllc.org',
     'https://superiorllc.org',
