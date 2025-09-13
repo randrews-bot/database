@@ -235,4 +235,5 @@ class GenerateReportV2(BaseModel): address: str email: EmailStr
 @app.post("/api/v2/generate-report") async def generate_report_v2(payload:
 GenerateReportV2): return {"ok": True, "v": 2, "echo": {"address": payload.address,
 "email": payload.email}}
+import os ALLOWED = set(e.strip().lower() for e in os.getenv("ALLOW_EMAILS","").split(",") if e.strip())
 
