@@ -230,4 +230,9 @@ async def generate_report(payload: GenerateReportRequest):
         "demographics": demo,
         "crime": crime,
     }
+from pydantic import BaseModel, EmailStr
+class GenerateReportV2(BaseModel): address: str email: EmailStr
+@app.post("/api/v2/generate-report") async def generate_report_v2(payload:
+GenerateReportV2): return {"ok": True, "v": 2, "echo": {"address": payload.address,
+"email": payload.email}}
 
