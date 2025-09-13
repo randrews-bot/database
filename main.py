@@ -2,7 +2,7 @@
 import os
 import datetime as dt
 from typing import Optional, List, Dict, Any
-
+import os 
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,12 +10,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 
 # ------------------------------------------------------------------------------
+
 # Environment
 # ------------------------------------------------------------------------------
 ACS_YEAR = os.getenv("ACS_YEAR", "2022")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 RENTCAST_API_KEY = os.getenv("RENTCAST_API_KEY")
-
+ALLOWED = set(e.strip().lower() for e in os.getenv("ALLOW_EMAILS","").split(",") if e.strip())
 PORT = int(os.getenv("PORT", "10000"))
 CORS_ORIGINS = [o.strip() for o in os.getenv(
     "CORS_ORIGINS",
@@ -192,7 +193,7 @@ async def fetch_acs_demographics(state: str, county: str, tract: str) -> Dict[st
             "state": rec.get("state"),
             "county": rec.get("county"),
             "tract": rec.get("tract"),
-        },
+        }
         "acsYear": ACS_YEAR,
     }
 
@@ -220,7 +221,12 @@ async def generate_report(payload: GenerateReportRequest):
     # 4) (Optional) Crime scaffold
     crime = await fetch_crime(geo["lat"], geo["lng"])
 
-    return {
+@app.post("/api/v2/generate-report")
+  async def generate_report_v2(payload: GenerateReportV2):   
+   return {"ok": True, "v": 2, "echo": {"address": payload.address,"email": payload.email}}
+     
+                                        
+return {
         "ok": True,
         "step": "geocode+property+demographics+crime",
         "address": payload.address,
@@ -230,10 +236,9 @@ async def generate_report(payload: GenerateReportRequest):
         "demographics": demo,
         "crime": crime,
     }
-from pydantic import BaseModel, EmailStr
-class GenerateReportV2(BaseModel): address: str email: EmailStr
-@app.post("/api/v2/generate-report") async def generate_report_v2(payload:
-GenerateReportV2): return {"ok": True, "v": 2, "echo": {"address": payload.address,
-"email": payload.email}}
-import os ALLOWED = set(e.strip().lower() for e in os.getenv("ALLOW_EMAILS","").split(",") if e.strip())
+
+
+
+
+
 
