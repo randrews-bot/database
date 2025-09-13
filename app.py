@@ -26,6 +26,43 @@ app.add_middleware(
 )
 
 # ---------- Helpers (DSN sanitizer / SSL enforcer / API key gate) ----------
+async def fetch_rental_comps(address: str | None = None,
+                             lat: float | None = None,
+                             lng: float | None = None,
+                             limit: int = 6) -> dict:
+    if not RENTCAST_API_KEY:
+        raise HTTPException(status_code=500, detail="RENTCAST_API_KEY not set")
+
+    # Prefer address if you have it; otherwise require lat/lng
+    params = {}
+    if address:
+        params["address"] = address
+    elif lat is not None and lng is not None:
+        params["latitude"] = lat
+        params["longitude"] = lng
+    else:
+        raise HTTPException(status_code=400, detail="Provide address or latitude+longitude")
+
+    # The AVM rent endpoint returns estimate + comps
+    url = "https://api.rentcast.io/v1/avm/rent/long-term"
+    headers = {"X-Api-Key": RENTCAST_API_KEY, "Accept": "application/json"}
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(url, headers=headers, params=params)
+
+    if r.status_code == 404:
+        # No comps/estimate available for the given location
+        return {"estimate": None, "comps": [], "reason": "no results"}
+
+    r.raise_for_status()
+    data = r.json()
+    # The docs show this endpoint returns the estimate and comparable listings
+    # Pull the comps array field if present; otherwise default to empty.
+    comps = data.get("comps") or data.get("comparableProperties") or []
+    return {"estimate": data, "comps": comps}
+
+
+
 def _sanitize_dsn(raw: str) -> str:
     """
     Accept common misconfigurations:
