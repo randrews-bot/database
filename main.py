@@ -18,4 +18,10 @@ Add these helpers below your models: async def geocode(address: str): if not GOO
 
 async def fetch_property(address: str): if not RENTCAST_API_KEY: raise HTTPException(status_code=500, detail="RENTCAST_API_KEY not set") url = "https://api.rentcast.io/v1/properties" headers = {"X-Api-Key": RENTCAST_API_KEY, "Accept": "application/json"} params = {"address": address} async with httpx.AsyncClient(timeout=15) as client: r = await client.get(url, headers=headers, params=params) if r.status_code >= 400: raise HTTPException(status_code=502, detail=f"Rentcast error {r.status_code}") return r.json()
 
+
 Update the /api/generate-report endpoint body: @app.post("/api/generate-report") async def generate_report(payload: GenerateReportRequest): geo = await geocode(payload.address) prop = await fetch_property(payload.address) return { "ok": True, "step": "geocode+property", "address": payload.address, "email": payload.email, "geo": geo, "property": prop }
+import datetime as dt
+
+def _date_str(d): return d.strftime("%Y-%m-%d")
+
+async def fetch_crime(lat: float, lng: float, radius_miles: float = 3.0, days: int = 30): # Placeholder structure — next step we’ll pull real counts/trend without a key today = dt.date.today() start_30 = today - dt.timedelta(days=days) start_12m = (today.replace(day=1) - dt.timedelta(days=365)).replace(day=1) return { "filters": { "center": {"lat": lat, "lng": lng}, "radiusMiles": radius_miles, "last30d": {"from": _date_str(start_30), "to": _date_str(today)}, "last12m": {"from": _date_str(start_12m), "to": _date_str(today)} }, "summary": { "last30dTotal": 0, "trend12m": [], "byType": {} }, "incidents": [] }
