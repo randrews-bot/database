@@ -38,10 +38,11 @@ app.add_middleware(
 # ------------------------------------------------------------------------------
 # Models
 # ------------------------------------------------------------------------------
-class GenerateReportRequest(BaseModel):
-    address: str
-    email: EmailStr
-
+class GenerateReportRequest(BaseModel): address: str email: EmailStr
+  @app.post("/api/generate-report") async def generate_report(payload:
+GenerateReportRequest): return {"ok": True, "echo": {"address": payload.address,
+"email": payload.email}}
+                                                              
 # ------------------------------------------------------------------------------
 # Utility helpers
 # ------------------------------------------------------------------------------
@@ -229,3 +230,4 @@ async def generate_report(payload: GenerateReportRequest):
         "demographics": demo,
         "crime": crime,
     }
+
