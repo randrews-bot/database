@@ -4,6 +4,14 @@ main.py import os from fastapi import FastAPI, HTTPException from fastapi.middle
 PORT = int(os.getenv("PORT", "10000")) CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "https://superiorllc.org,https://app.superiorllc.org").split(",")]
 
 app = FastAPI(title="safe-keeping-api")
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"message": "API is running"}
+
 
 app.add_middleware( CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=[""], allow_headers=[""], )
 
@@ -35,3 +43,4 @@ url = "https://geo.fcc.gov/api/census/block/find" params = {"latitude": lat, "lo
 
 async def fetch_acs_demographics(state: str, county: str, tract: str): # ACS 5-year: median income + tenure split base = f"https://api.census.gov/data/{ACS_YEAR}/acs/acs5" vars_ = ["NAME", "B19013_001E", "B25003_001E", "B25003_002E", "B25003_003E"] params = { "get": ",".join(vars_), "for": f"tract:{tract}", "in": f"state:{state} county:{county}", } async with httpx.AsyncClient(timeout=15) as client: r = await client.get(base, params=params) if r.status_code >= 400: raise HTTPException(status_code=502, detail=f"ACS error {r.status_code}") rows = r.json() if not rows or len(rows) < 2: raise HTTPException(status_code=404, detail="ACS data not found") hdr, val = rows[0], rows[1] rec = {hdr[i]: val[i] for i in range(len(hdr))} # Parse values def num(x): try: return float(x) except: return None median_income = num(rec.get("B19013_001E")) occ_total = num(rec.get("B25003_001E")) or 0 owner = num(rec.get("B25003_002E")) or 0 renter = num(rec.get("B25003_003E")) or 0 owner_pct = (owner / occ_total) if occ_total else None renter_pct = (renter / occ_total) if occ_total else None return { "name": rec.get("NAME"), "medianHouseholdIncome": median_income, "tenure": {"ownerPct": owner_pct, "renterPct": renter_pct}, "fips": {"state": rec.get("state"), "county": rec.get("county"), "tract": rec.get("tract")}, "acsYear": ACS_YEAR, }
  update /api/generate-report to include demographics @app.post("/api/generate-report") async def generate_report(payload: GenerateReportRequest): geo = await geocode(payload.address) prop = await fetch_property(payload.address) fips = await get_fips_from_latlng(geo["lat"], geo["lng"]) demo = await fetch_acs_demographics(fips["state"], fips["county"], fips["tract"]) return { "ok": True, "step": "geocode+property+demographics", "address": payload.address, "email": payload.email, "geo": geo, "property": prop, "demographics": demo }
+
