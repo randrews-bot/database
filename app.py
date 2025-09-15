@@ -17,7 +17,9 @@ ALLOWED_ORIGINS = [
     "https://superior-property-api.onrender.com",
         "https://app.superiorllc.org",
         "https://checkout.superiorllc.org",
-        "https://superiorllc.org"
+        "https://superiorllc.org",
+        "https://kingsincorporated.org",
+        "https://local-insights-safety.deploypad.app"
 ]
 
 app.add_middleware(
