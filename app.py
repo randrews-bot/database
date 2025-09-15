@@ -15,6 +15,9 @@ app = FastAPI(title="Superior Property API", version="1.2.5")
 ALLOWED_ORIGINS = [
         "https://api.superiorllc.org",
     "https://superior-property-api.onrender.com",
+        "https://app.superiorllc.org",
+        "https://checkout.superiorllc.org",
+        "https://superiorllc.org"
 ]
 
 app.add_middleware(
