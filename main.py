@@ -1,244 +1,172 @@
-# main.py
+
 import os
-import datetime as dt
-from typing import Optional, List, Dict, Any
-import os 
-import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr
 
-# ------------------------------------------------------------------------------
+app = FastAPI(title="Superior API")
 
-# Environment
-# ------------------------------------------------------------------------------
-ACS_YEAR = os.getenv("ACS_YEAR", "2022")
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-RENTCAST_API_KEY = os.getenv("RENTCAST_API_KEY")
-ALLOWED = set(e.strip().lower() for e in os.getenv("ALLOW_EMAILS","").split(",") if e.strip())
-PORT = int(os.getenv("PORT", "10000"))
-CORS_ORIGINS = [o.strip() for o in os.getenv(
-    "CORS_ORIGINS",
-    "https://superiorllc.org,https://app.superiorllc.org"
-).split(",")]
-
-# ------------------------------------------------------------------------------
-# App
-# ------------------------------------------------------------------------------
-app = FastAPI(title="safe-keeping-api")
-
+origins = [o.strip() for o in os.getenv("CORS_ORIGINS","https://reports.superiorllc.org,https://superiorllc.org").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=origins or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ------------------------------------------------------------------------------
-# Models
-# ------------------------------------------------------------------------------
-class GenerateReportRequest(BaseModel): address: str email: EmailStr
-  @app.post("/api/generate-report") async def generate_report(payload:
-GenerateReportRequest): return {"ok": True, "echo": {"address": payload.address,
-"email": payload.email}}
-                                                              
-# ------------------------------------------------------------------------------
-# Utility helpers
-# ------------------------------------------------------------------------------
-def _date_str(d: dt.date) -> str:
-    return d.strftime("%Y-%m-%d")
-
-async def geocode(address: str) -> Dict[str, Any]:
-    if not GOOGLE_MAPS_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_MAPS_API_KEY not set")
-    url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {"address": address, "key": GOOGLE_MAPS_API_KEY}
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(url, params=params)
-    data = r.json()
-    result = (data.get("results") or [None])[0]
-    if not result:
-        raise HTTPException(status_code=404, detail="Address not found")
-    loc = result["geometry"]["location"]
-    return {
-        "lat": loc["lat"],
-        "lng": loc["lng"],
-        "formattedAddress": result.get("formatted_address")
-    }
-
-async def fetch_property(address: str) -> Any:
-    if not RENTCAST_API_KEY:
-        raise HTTPException(status_code=500, detail="RENTCAST_API_KEY not set")
-    url = "https://api.rentcast.io/v1/properties"
-    headers = {"X-Api-Key": RENTCAST_API_KEY, "Accept": "application/json"}
-    params = {"address": address}
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(url, headers=headers, params=params)
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Rentcast error {r.status_code}")
-    return r.json()
-
-async def fetch_fbi_agencies(lat: float, lng: float) -> List[Dict[str, Any]]:
-    # Try alternative param names used by the FBI SAPI
-    urls = [
-        ("https://api.usa.gov/crime/fbi/sapi/api/agencies/bylocation", {"lat": lat, "long": lng}),
-        ("https://api.usa.gov/crime/fbi/sapi/api/agencies/bylocation", {"latitude": lat, "longitude": lng}),
-    ]
-    async with httpx.AsyncClient(timeout=12) as client:
-        for base, params in urls:
-            try:
-                r = await client.get(base, params=params)
-                if r.status_code < 400:
-                    data = r.json()
-                    items = data.get("agencies") if isinstance(data, dict) else data
-                    agencies = [
-                        {
-                            "ori": a.get("ori"),
-                            "agencyName": a.get("agency_name") or a.get("agencyName"),
-                            "agencyType": a.get("agency_type") or a.get("agencyType"),
-                            "city": a.get("city"),
-                            "state": a.get("state_abbr") or a.get("stateAbbr"),
-                        }
-                        for a in (items or [])
-                        if a and a.get("ori")
-                    ]
-                    seen, uniq = set(), []
-                    for a in agencies:
-                        if a["ori"] in seen:
-                            continue
-                        seen.add(a["ori"])
-                        uniq.append(a)
-                    return uniq[:15]
-            except Exception:
-                continue
-    return []
-
-async def fetch_crime(lat: float, lng: float, radius_miles: float = 3.0, days: int = 30) -> Dict[str, Any]:
-    # Placeholder structure for now
-    today = dt.date.today()
-    start_30 = today - dt.timedelta(days=days)
-    start_12m = (today.replace(day=1) - dt.timedelta(days=365)).replace(day=1)
-    agencies = await fetch_fbi_agencies(lat, lng)
-    return {
-        "filters": {
-            "center": {"lat": lat, "lng": lng},
-            "radiusMiles": radius_miles,
-            "last30d": {"from": _date_str(start_30), "to": _date_str(today)},
-            "last12m": {"from": _date_str(start_12m), "to": _date_str(today)},
-        },
-        "summary": {
-            "last30dTotal": 0,
-            "trend12m": [],
-            "byType": {},
-        },
-        "incidents": [],
-        "fbiAgencies": agencies,
-    }
-
-async def get_fips_from_latlng(lat: float, lng: float) -> Dict[str, str]:
-    url = "https://geo.fcc.gov/api/census/block/find"
-    params = {"latitude": lat, "longitude": lng, "format": "json"}
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(url, params=params)
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail="FCC FIPS lookup failed")
-    data = r.json()
-    blk = data.get("Block", {})
-    fips = blk.get("FIPS")
-    if not fips or len(fips) < 11:
-        raise HTTPException(status_code=404, detail="FIPS not found")
-    state = fips[0:2]
-    county = fips[2:5]
-    tract = fips[5:11]  # 6-digit tract code
-    return {"state": state, "county": county, "tract": tract}
-
-async def fetch_acs_demographics(state: str, county: str, tract: str) -> Dict[str, Any]:
-    base = f"https://api.census.gov/data/{ACS_YEAR}/acs/acs5"
-    vars_ = ["NAME", "B19013_001E", "B25003_001E", "B25003_002E", "B25003_003E"]
-    params = {
-        "get": ",".join(vars_),
-        "for": f"tract:{tract}",
-        "in": f"state:{state} county:{county}",
-    }
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(base, params=params)
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"ACS error {r.status_code}")
-    rows = r.json()
-    if not rows or len(rows) < 2:
-        raise HTTPException(status_code=404, detail="ACS data not found")
-    hdr, val = rows[0], rows[1]
-    rec = {hdr[i]: val[i] for i in range(len(hdr))}
-
-    def num(x):
-        try:
-            return float(x)
-        except Exception:
-            return None
-
-    median_income = num(rec.get("B19013_001E"))
-    occ_total = num(rec.get("B25003_001E")) or 0
-    owner = num(rec.get("B25003_002E")) or 0
-    renter = num(rec.get("B25003_003E")) or 0
-    owner_pct = (owner / occ_total) if occ_total else None
-    renter_pct = (renter / occ_total) if occ_total else None
-
-    return {
-        "name": rec.get("NAME"),
-        "medianHouseholdIncome": median_income,
-        "tenure": {"ownerPct": owner_pct, "renterPct": renter_pct},
-        "fips": {
-            "state": rec.get("state"),
-            "county": rec.get("county"),
-            "tract": rec.get("tract"),
-        }
-        "acsYear": ACS_YEAR,
-    }
-
-# ------------------------------------------------------------------------------
-# Routes
-# ------------------------------------------------------------------------------
-@app.get("/", include_in_schema=False)
+@app.get("/")
 def root():
-    # Nice landing so "/" isn't 404
-    return JSONResponse({"ok": True, "service": "superior API", "docs": "/docs"})
-
-@app.get("/health", include_in_schema=False)
-async def health():
-    return {"ok": True, "app": "safe-keeping-api"}
-
-@app.post("/api/generate-report")
-async def generate_report(payload: GenerateReportRequest):
-    # 1) Geocode
-    geo = await geocode(payload.address)
-    # 2) Property basics
-    prop = await fetch_property(payload.address)
-    # 3) Census geo → ACS
-    fips = await get_fips_from_latlng(geo["lat"], geo["lng"])
-    demo = await fetch_acs_demographics(fips["state"], fips["county"], fips["tract"])
-    # 4) (Optional) Crime scaffold
-    crime = await fetch_crime(geo["lat"], geo["lng"])
-
-@app.post("/api/v2/generate-report")
-  async def generate_report_v2(payload: GenerateReportV2):   
-   return {"ok": True, "v": 2, "echo": {"address": payload.address,"email": payload.email}}
-     
-                                        
-return {
-        "ok": True,
-        "step": "geocode+property+demographics+crime",
-        "address": payload.address,
-        "email": payload.email,
-        "geo": geo,
-        "property": prop,
-        "demographics": demo,
-        "crime": crime,
-    }
+    return {"ok": True, "message": "API is running"}
 
 
 
+import os
+import uuid
+import time
+import threading
+from typing import Optional, Dict, Any
 
+import stripe
+import httpx
+from fastapi import HTTPException, Request
+from pydantic import BaseModel
 
+# ---- Stripe init ----
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
 
+# ---- In-memory stores (replace with Redis in prod) ----
+JOBS: Dict[str, Dict[str, Any]] = {}
+REPORTS: Dict[str, Dict[str, Any]] = {}
+
+class CreateSessionPayload(BaseModel):
+    address: Optional[str] = None
+    email: Optional[str] = None
+    success_url: str
+    cancel_url: str
+
+class ConfirmPayload(BaseModel):
+    session_id: Optional[str] = None
+    address: Optional[str] = None
+    email: Optional[str] = None
+
+def enqueue_generate_report(address: Optional[str], email: Optional[str]) -> str:
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {"state": "queued", "address": address, "email": email}
+    th = threading.Thread(target=_run_report_job, args=(job_id,), daemon=True)
+    th.start()
+    return job_id
+
+def _run_report_job(job_id: str):
+    job = JOBS.get(job_id)
+    if not job: 
+        return
+    job["state"] = "running"
+    address = job.get("address")
+    email = job.get("email")
+    time.sleep(2)  # simulate work
+    try:
+        report = build_report(address=address, email=email)
+        report_id = str(uuid.uuid4())
+        REPORTS[report_id] = report
+        job["state"] = "done"
+        job["report_id"] = report_id
+    except Exception as e:
+        job["state"] = "error"
+        job["error"] = str(e)
+
+def build_report(address: Optional[str], email: Optional[str]) -> Dict[str, Any]:
+    base = {"address": address or "Unknown", "email": email, "generated_at": int(time.time())}
+    key = os.getenv("RENTCAST_API_KEY", "")
+    if not key:
+        base["source"] = "mock"
+        base["rentcast"] = {"estimate": 1450, "confidence": 0.82}
+        return base
+    headers = {"X-Api-Key": key}
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get("https://api.rentcast.io/v1/properties", params={"address": address}, headers=headers)
+            r.raise_for_status()
+            prop = r.json()
+    except Exception as e:
+        base["source"] = "fallback-mock"
+        base["rentcast"] = {"estimate": 1450, "error": str(e)}
+        return base
+    base["source"] = "rentcast"
+    base["rentcast"] = prop
+    return base
+
+# ---- Routes (mounted on existing app) ----
+@app.post("/checkout/sessions")
+def checkout_sessions(payload: CreateSessionPayload):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Stripe not configured (STRIPE_SECRET_KEY)")
+    try:
+        price_id = os.getenv("STRIPE_PRICE_ID")
+        if not price_id:
+            raise HTTPException(status_code=500, detail="Missing STRIPE_PRICE_ID")
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=payload.success_url,
+            cancel_url=payload.cancel_url,
+            metadata={"address": payload.address or "", "email": payload.email or ""},
+            customer_email=payload.email,
+            allow_promotion_codes=True,
+        )
+        return {"id": session.id, "url": session.url}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/checkout/confirm")
+def checkout_confirm(payload: ConfirmPayload):
+    try:
+        address = payload.address
+        email = payload.email
+        if payload.session_id:
+            session = stripe.checkout.Session.retrieve(payload.session_id, expand=["payment_intent", "line_items"])
+            if session.payment_status != "paid":
+                raise HTTPException(status_code=400, detail="Payment not completed")
+            md = session.get("metadata") or {}
+            address = address or md.get("address")
+            email = email or (session.get("customer_details") or {}).get("email")
+        job_id = enqueue_generate_report(address=address, email=email)
+        return {"status": "processing", "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/reports/status")
+def report_status(job_id: str):
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"state": job["state"], "report_id": job.get("report_id"), "error": job.get("error")}
+
+@app.get("/reports/{report_id}")
+def report_get(report_id: str):
+    rep = REPORTS.get(report_id)
+    if not rep:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return rep
+
+@app.post("/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    if not secret:
+        return {"ok": True, "skipped": "no webhook secret configured"}
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature")
+    try:
+        event = stripe.Webhook.construct_event(payload=payload, sig_header=sig, secret=secret)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {e}")
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        md = session.get("metadata") or {}
+        address = md.get("address")
+        email = (session.get("customer_details") or {}).get("email")
+        enqueue_generate_report(address=address, email=email)
+    return {"ok": True}
