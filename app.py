@@ -19,7 +19,8 @@ ALLOWED_ORIGINS = [
         "https://checkout.superiorllc.org",
         "https://superiorllc.org",
         "https://kingsincorporated.org",
-        "https://local-insights-safety.deploypad.app"
+        "https://local-insights-safety.deploypad.app",
+        "https://reports.superiollc.org"
 ]
 
 app.add_middleware(
