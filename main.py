@@ -2,7 +2,10 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from webhook_stripe import router as stripe_webhook
 
+
+app = FastAPI(title="safe-keeping-api")
 app = FastAPI(title="Superior API")
 
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS","https://reports.superiorllc.org,https://superiorllc.org").split(",") if o.strip()]
@@ -17,7 +20,17 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {"ok": True, "message": "API is running"}
+    
+CORS_ORIGINS = ["https://superiorllc.org", "https://app.superiorllc.org"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+app.include_router(stripe_webhook)
 
 
 import os
@@ -170,3 +183,6 @@ async def stripe_webhook(request: Request):
         email = (session.get("customer_details") or {}).get("email")
         enqueue_generate_report(address=address, email=email)
     return {"ok": True}
+
+
+
